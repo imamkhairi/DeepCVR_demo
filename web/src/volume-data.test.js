@@ -67,12 +67,12 @@ describe('volume data', () => {
     expect(rotationDelta(2, false)).toBe(0);
   });
 
-  it('uses one shared volume-material configuration for both panels', () => {
+  it('uses one shared unlit volume-material configuration for both panels', () => {
     expect(VIEWER_RENDERING).toEqual({
       ambient: 0.25,
       diffuse: 0.75,
       sampleDistance: 0.7,
-      shade: true,
+      shade: false,
     });
   });
 
