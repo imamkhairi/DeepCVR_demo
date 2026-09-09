@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Interactive 3D cell-volume visualization demo" />
+    <title>DeepCVR demo</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="intro">
+        <h1>DeepCVR demo</h1>
+        <p>Explore reconstructed cell volumes in 3D.</p>
+        <div class="viewer-options">
+          <label for="dataset">Volume</label>
+          <select id="dataset" aria-label="Choose a reconstruction"></select>
+          <label class="toggle" for="auto-rotate">
+            <input id="auto-rotate" type="checkbox" checked />
+            <span>Auto-rotate</span>
+          </label>
+        </div>
+      </section>
+      <section class="comparison-stack" aria-label="DeepCVR and DIP reconstruction comparison">
+        <article class="comparison-panel">
+          <h2>DeepCVR reconstruction result</h2>
+          <div id="deepcvr-window" class="render-window" aria-label="DeepCVR 3D reconstruction"></div>
+        </article>
+        <article class="comparison-panel">
+          <h2>DIP reconstruction result</h2>
+          <div id="dip-window" class="render-window" aria-label="DIP 3D reconstruction"></div>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

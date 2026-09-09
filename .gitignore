@@ -1,0 +1,6 @@
+__pycache__/
+3d_npy/
+3d_npy_backup/
+3d_npy_skip/
+web/node_modules/
+web/dist/
