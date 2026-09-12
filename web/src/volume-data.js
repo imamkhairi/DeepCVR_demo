@@ -21,7 +21,7 @@ export const VIEWER_RENDERING = {
   ambient: 0.25,
   diffuse: 0.75,
   sampleDistance: 0.7,
-  shade: true,
+  shade: false,
 };
 
 function product(values) {
