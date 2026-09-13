@@ -24,6 +24,30 @@ export const VIEWER_RENDERING = {
   shade: false,
 };
 
+export function attachVolumeWhenReady(viewer) {
+  if (!viewer.imageData.getPointData().getScalars()) {
+    throw new Error('Cannot attach a volume before its image data is populated.');
+  }
+  if (!viewer.volumeAttached) {
+    viewer.renderer.addVolume(viewer.volume);
+    viewer.volumeAttached = true;
+  }
+}
+
+export async function loadComparisonVolumes(sources, load, apply) {
+  apply('deepcvr', await load(sources.deepcvr));
+  apply('dip', await load(sources.dip));
+}
+
+export function fitViewerToVolume(viewer) {
+  viewer.fullScreenRenderer.resize();
+  if (!viewer.volumeAttached) return;
+
+  viewer.renderer.resetCamera();
+  viewer.renderer.resetCameraClippingRange();
+  viewer.interactor.render();
+}
+
 function product(values) {
   return values.reduce((total, value) => total * value, 1);
 }

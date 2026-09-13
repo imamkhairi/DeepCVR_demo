@@ -1,4 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import vtkDataArray from '@kitware/vtk.js/Common/Core/DataArray';
+import vtkImageData from '@kitware/vtk.js/Common/DataModel/ImageData';
+import vtkRenderer from '@kitware/vtk.js/Rendering/Core/Renderer';
+import vtkVolume from '@kitware/vtk.js/Rendering/Core/Volume';
+import vtkVolumeMapper from '@kitware/vtk.js/Rendering/Core/VolumeMapper';
+import * as volumeData from './volume-data.js';
 import {
   DATASETS,
   DEEPCVR_OPACITY_POINTS,
@@ -74,6 +80,80 @@ describe('volume data', () => {
       sampleDistance: 0.7,
       shade: false,
     });
+  });
+
+  it('attaches a populated volume exactly once and rejects an empty image', () => {
+    expect(typeof volumeData.attachVolumeWhenReady).toBe('function');
+    if (typeof volumeData.attachVolumeWhenReady !== 'function') return;
+
+    const imageData = vtkImageData.newInstance();
+    const mapper = vtkVolumeMapper.newInstance();
+    const volume = vtkVolume.newInstance();
+    const renderer = vtkRenderer.newInstance();
+    mapper.setInputData(imageData);
+    volume.setMapper(mapper);
+    const viewer = { imageData, renderer, volume, volumeAttached: false };
+
+    expect(() => volumeData.attachVolumeWhenReady(viewer)).toThrow('before its image data is populated');
+
+    imageData.setDimensions(1, 1, 1);
+    imageData.getPointData().setScalars(vtkDataArray.newInstance({
+      name: 'intensity', values: new Uint8Array([255]), numberOfComponents: 1,
+    }));
+    volumeData.attachVolumeWhenReady(viewer);
+    volumeData.attachVolumeWhenReady(viewer);
+
+    expect(renderer.getVolumes()).toEqual([volume]);
+    expect(viewer.volumeAttached).toBe(true);
+
+    renderer.delete();
+    volume.delete();
+    mapper.delete();
+    imageData.delete();
+  });
+
+  it('loads and applies DeepCVR before requesting DIP', async () => {
+    expect(typeof volumeData.loadComparisonVolumes).toBe('function');
+    if (typeof volumeData.loadComparisonVolumes !== 'function') return;
+
+    const events = [];
+    await volumeData.loadComparisonVolumes(
+      { deepcvr: 'deep.npy', dip: 'dip.npy' },
+      async (path) => {
+        events.push(`load:${path}`);
+        return path.toUpperCase();
+      },
+      (kind, data) => events.push(`apply:${kind}:${data}`),
+    );
+
+    expect(events).toEqual([
+      'load:deep.npy',
+      'apply:deepcvr:DEEP.NPY',
+      'load:dip.npy',
+      'apply:dip:DIP.NPY',
+    ]);
+  });
+
+  it('resizes and refits a viewer only after its volume is attached', () => {
+    expect(typeof volumeData.fitViewerToVolume).toBe('function');
+    if (typeof volumeData.fitViewerToVolume !== 'function') return;
+
+    const events = [];
+    const viewer = {
+      fullScreenRenderer: { resize: () => events.push('resize') },
+      interactor: { render: () => events.push('render') },
+      renderer: {
+        resetCamera: () => events.push('camera'),
+        resetCameraClippingRange: () => events.push('clipping'),
+      },
+      volumeAttached: false,
+    };
+
+    volumeData.fitViewerToVolume(viewer);
+    viewer.volumeAttached = true;
+    volumeData.fitViewerToVolume(viewer);
+
+    expect(events).toEqual(['resize', 'resize', 'camera', 'clipping', 'render']);
   });
 
   it('lists each supplied public reconstruction exactly once', () => {

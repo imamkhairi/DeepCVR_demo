@@ -17,6 +17,9 @@ h1 { font-size: clamp(2rem, 5vw, 4rem); letter-spacing: -.05em; line-height: 1; 
 select { background: #091523; border: 1px solid #385777; border-radius: .45rem; color: #eef6ff; min-width: 230px; padding: .65rem .75rem; }
 .toggle { align-items: center; color: #c6d6e8; cursor: pointer; display: flex; font-size: .9rem; font-weight: 700; gap: .45rem; padding: .65rem 0; }
 .toggle input { accent-color: #63d5bb; height: 1rem; margin: 0; width: 1rem; }
+.viewer-status { color: #b3c4d9; font-size: .9rem; margin: .75rem 0 0; min-height: 1.25rem; }
+.viewer-status[data-state="ready"] { color: #8fe3cf; }
+.viewer-status[data-state="error"] { color: #ffb4ab; }
 .comparison-stack { display: grid; gap: 1rem; }
 .comparison-panel { background: #0d1b2d; border: 1px solid #1e3855; border-radius: 1rem; overflow: hidden; }
 .comparison-panel h2 { color: #d9e8f7; font-size: 1rem; margin: 0; padding: .8rem 1rem; }

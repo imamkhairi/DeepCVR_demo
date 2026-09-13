@@ -6,12 +6,32 @@ import vtkImageData from '@kitware/vtk.js/Common/DataModel/ImageData';
 import vtkFullScreenRenderWindow from '@kitware/vtk.js/Rendering/Misc/FullScreenRenderWindow';
 import vtkVolume from '@kitware/vtk.js/Rendering/Core/Volume';
 import vtkVolumeMapper from '@kitware/vtk.js/Rendering/Core/VolumeMapper';
-import { DATASETS, DEEPCVR_OPACITY_POINTS, DIP_OPACITY_POINTS, extractFirstChannel, getComparisonSources, invertUint8, normalizeToUint8, parseNpy, rotationDelta, VIEWER_RENDERING } from './volume-data.js';
+import {
+  attachVolumeWhenReady,
+  DATASETS,
+  DEEPCVR_OPACITY_POINTS,
+  DIP_OPACITY_POINTS,
+  extractFirstChannel,
+  fitViewerToVolume,
+  getComparisonSources,
+  invertUint8,
+  loadComparisonVolumes,
+  normalizeToUint8,
+  parseNpy,
+  rotationDelta,
+  VIEWER_RENDERING,
+} from './volume-data.js';
 import './style.css';
 
 const selector = document.querySelector('#dataset');
 const autoRotateInput = document.querySelector('#auto-rotate');
+const viewerStatus = document.querySelector('#viewer-status');
 for (const dataset of DATASETS) selector.add(new Option(dataset.label, dataset.id));
+
+function setViewerStatus(message, state = 'loading') {
+  viewerStatus.textContent = message;
+  viewerStatus.dataset.state = state;
+}
 
 function createViewer(container, opacityPoints) {
   const fullScreenRenderer = vtkFullScreenRenderWindow.newInstance({
@@ -42,9 +62,21 @@ function createViewer(container, opacityPoints) {
   volume.getProperty().setShade(VIEWER_RENDERING.shade);
   volume.getProperty().setAmbient(VIEWER_RENDERING.ambient);
   volume.getProperty().setDiffuse(VIEWER_RENDERING.diffuse);
-  renderer.addVolume(volume);
 
-  return { fullScreenRenderer, imageData, interactor: renderWindow.getInteractor(), renderer };
+  const canvas = container.querySelector('canvas');
+  canvas?.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    setViewerStatus('The 3D graphics context was lost. Reload this page to restart the viewers.', 'error');
+  });
+
+  return {
+    fullScreenRenderer,
+    imageData,
+    interactor: renderWindow.getInteractor(),
+    renderer,
+    volume,
+    volumeAttached: false,
+  };
 }
 
 const deepcvrViewer = createViewer(document.querySelector('#deepcvr-window'), DEEPCVR_OPACITY_POINTS);
@@ -81,6 +113,7 @@ function setVolume(viewer, parsed) {
     name: 'intensity', values: invertUint8(normalizeToUint8(values)), numberOfComponents: 1,
   }));
   viewer.imageData.modified();
+  attachVolumeWhenReady(viewer);
 }
 
 async function fetchVolume(path) {
@@ -92,19 +125,22 @@ async function fetchVolume(path) {
 async function loadComparison(id) {
   const dataset = DATASETS.find((entry) => entry.id === id);
   selector.disabled = true;
+  setViewerStatus('Loading DeepCVR volume…');
   try {
     const sources = getComparisonSources(dataset);
-    const [deepcvrData, dipData] = await Promise.all([fetchVolume(sources.deepcvr), fetchVolume(sources.dip)]);
-    setVolume(deepcvrViewer, deepcvrData);
-    setVolume(dipViewer, dipData);
-    deepcvrViewer.renderer.resetCamera();
-    dipViewer.renderer.resetCamera();
+    const viewers = { deepcvr: deepcvrViewer, dip: dipViewer };
+    await loadComparisonVolumes(sources, fetchVolume, (kind, data) => {
+      setVolume(viewers[kind], data);
+      fitViewerToVolume(viewers[kind]);
+      if (kind === 'deepcvr') setViewerStatus('Loading DIP volume…');
+    });
     copyOrientation(deepcvrViewer, dipViewer);
-    deepcvrViewer.interactor.render();
-    dipViewer.interactor.render();
     syncAutoRotation();
+    setViewerStatus('Both volumes are ready.', 'ready');
   } catch (error) {
     console.error('Unable to display the selected reconstruction comparison.', error);
+    const detail = error instanceof Error ? error.message : String(error);
+    setViewerStatus(`Unable to display the volumes: ${detail}`, 'error');
   } finally {
     selector.disabled = false;
   }
@@ -138,8 +174,21 @@ function syncAutoRotation() {
 
 selector.addEventListener('change', () => loadComparison(selector.value));
 autoRotateInput.addEventListener('change', syncAutoRotation);
-window.addEventListener('resize', () => {
-  deepcvrViewer.fullScreenRenderer.resize();
-  dipViewer.fullScreenRenderer.resize();
-});
+
+let refitFrame;
+function scheduleViewerRefit() {
+  cancelAnimationFrame(refitFrame);
+  refitFrame = requestAnimationFrame(() => {
+    refitFrame = requestAnimationFrame(() => {
+      fitViewerToVolume(deepcvrViewer);
+      fitViewerToVolume(dipViewer);
+      if (deepcvrViewer.volumeAttached && dipViewer.volumeAttached) {
+        copyOrientation(deepcvrViewer, dipViewer);
+      }
+    });
+  });
+}
+
+window.addEventListener('resize', scheduleViewerRefit);
+window.addEventListener('orientationchange', scheduleViewerRefit);
 loadComparison(DATASETS[0].id);
