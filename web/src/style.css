@@ -5,6 +5,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; min-width: 320px; }
 button, select, input { font: inherit; }
 
@@ -20,6 +21,11 @@ select { background: #091523; border: 1px solid #385777; border-radius: .45rem; 
 .viewer-status { color: #b3c4d9; font-size: .9rem; margin: .75rem 0 0; min-height: 1.25rem; }
 .viewer-status[data-state="ready"] { color: #8fe3cf; }
 .viewer-status[data-state="error"] { color: #ffb4ab; }
+.mobile-comparison { display: grid; gap: .75rem; }
+.mobile-tabs { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; }
+.mobile-tabs button { background: #091523; border: 1px solid #385777; border-radius: .55rem; color: #c6d6e8; font-weight: 700; padding: .7rem; }
+.mobile-tabs button.is-selected { background: #16334c; border-color: #63d5bb; color: #eef6ff; }
+.mobile-tabs button:disabled { cursor: wait; opacity: .55; }
 .comparison-stack { display: grid; gap: 1rem; }
 .comparison-panel { background: #0d1b2d; border: 1px solid #1e3855; border-radius: 1rem; overflow: hidden; }
 .comparison-panel h2 { color: #d9e8f7; font-size: 1rem; margin: 0; padding: .8rem 1rem; }

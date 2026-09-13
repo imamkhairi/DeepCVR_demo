@@ -11,13 +11,13 @@ import {
   DATASETS,
   DEEPCVR_OPACITY_POINTS,
   DIP_OPACITY_POINTS,
-  extractFirstChannel,
   fitViewerToVolume,
   getComparisonSources,
-  invertUint8,
   loadComparisonVolumes,
-  normalizeToUint8,
   parseNpy,
+  prepareVolume,
+  renderPixelRatio,
+  resolveSingleViewerMode,
   rotationDelta,
   VIEWER_RENDERING,
 } from './volume-data.js';
@@ -26,6 +26,22 @@ import './style.css';
 const selector = document.querySelector('#dataset');
 const autoRotateInput = document.querySelector('#auto-rotate');
 const viewerStatus = document.querySelector('#viewer-status');
+const desktopComparison = document.querySelector('#desktop-comparison');
+const mobileComparison = document.querySelector('#mobile-comparison');
+const mobileTitle = document.querySelector('#mobile-view-title');
+const mobileWindow = document.querySelector('#mobile-window');
+const mobileTabButtons = [...document.querySelectorAll('[data-volume-kind]')];
+
+const requestedViewerMode = new URLSearchParams(window.location.search).get('viewer');
+const singleViewerMode = resolveSingleViewerMode({
+  coarsePointer: window.matchMedia?.('(pointer: coarse)').matches ?? false,
+  maxTouchPoints: navigator.maxTouchPoints ?? 0,
+  viewportWidth: window.innerWidth,
+}, requestedViewerMode);
+
+desktopComparison.hidden = singleViewerMode;
+mobileComparison.hidden = !singleViewerMode;
+document.documentElement.dataset.viewerMode = singleViewerMode ? 'single' : 'comparison';
 for (const dataset of DATASETS) selector.add(new Option(dataset.label, dataset.id));
 
 function setViewerStatus(message, state = 'loading') {
@@ -33,11 +49,17 @@ function setViewerStatus(message, state = 'loading') {
   viewerStatus.dataset.state = state;
 }
 
-function createViewer(container, opacityPoints) {
+function setOpacityPoints(viewer, opacityPoints) {
+  viewer.opacity.removeAllPoints();
+  for (const [intensity, alpha] of opacityPoints) viewer.opacity.addPoint(intensity, alpha);
+}
+
+function createViewer(container, opacityPoints, isConstrained = false) {
   const fullScreenRenderer = vtkFullScreenRenderWindow.newInstance({
     rootContainer: container,
     background: [0.015, 0.027, 0.05],
     containerStyle: { height: '100%', width: '100%', position: 'absolute' },
+    listenWindowResize: false,
   });
   const renderer = fullScreenRenderer.getRenderer();
   const renderWindow = fullScreenRenderer.getRenderWindow();
@@ -63,24 +85,46 @@ function createViewer(container, opacityPoints) {
   volume.getProperty().setAmbient(VIEWER_RENDERING.ambient);
   volume.getProperty().setDiffuse(VIEWER_RENDERING.diffuse);
 
+  const resizeSurface = () => {
+    const bounds = container.getBoundingClientRect();
+    const pixelRatio = renderPixelRatio(window.devicePixelRatio, isConstrained);
+    const width = Math.max(1, Math.floor(bounds.width * pixelRatio));
+    const height = Math.max(1, Math.floor(bounds.height * pixelRatio));
+    fullScreenRenderer.getApiSpecificRenderWindow().setSize(width, height);
+  };
+  resizeSurface();
+
   const canvas = container.querySelector('canvas');
   canvas?.addEventListener('webglcontextlost', (event) => {
     event.preventDefault();
-    setViewerStatus('The 3D graphics context was lost. Reload this page to restart the viewers.', 'error');
+    setViewerStatus('The 3D graphics context was lost. Reload this page to restart the viewer.', 'error');
   });
 
   return {
     fullScreenRenderer,
     imageData,
     interactor: renderWindow.getInteractor(),
+    opacity,
     renderer,
+    resizeSurface,
     volume,
     volumeAttached: false,
   };
 }
 
-const deepcvrViewer = createViewer(document.querySelector('#deepcvr-window'), DEEPCVR_OPACITY_POINTS);
-const dipViewer = createViewer(document.querySelector('#dip-window'), DIP_OPACITY_POINTS);
+let deepcvrViewer = null;
+let dipViewer = null;
+let mobileViewer = null;
+
+if (singleViewerMode) {
+  mobileViewer = createViewer(mobileWindow, DEEPCVR_OPACITY_POINTS, true);
+} else {
+  deepcvrViewer = createViewer(document.querySelector('#deepcvr-window'), DEEPCVR_OPACITY_POINTS);
+  dipViewer = createViewer(document.querySelector('#dip-window'), DIP_OPACITY_POINTS);
+}
+
+const primaryViewer = singleViewerMode ? mobileViewer : deepcvrViewer;
+const activeViewers = singleViewerMode ? [mobileViewer] : [deepcvrViewer, dipViewer];
 let synchronizingCamera = false;
 
 function copyOrientation(source, target) {
@@ -101,16 +145,17 @@ function copyOrientation(source, target) {
   synchronizingCamera = false;
 }
 
-deepcvrViewer.renderer.getActiveCamera().onModified(() => copyOrientation(deepcvrViewer, dipViewer));
-dipViewer.renderer.getActiveCamera().onModified(() => copyOrientation(dipViewer, deepcvrViewer));
+if (!singleViewerMode) {
+  deepcvrViewer.renderer.getActiveCamera().onModified(() => copyOrientation(deepcvrViewer, dipViewer));
+  dipViewer.renderer.getActiveCamera().onModified(() => copyOrientation(dipViewer, deepcvrViewer));
+}
 
-function setVolume(viewer, parsed) {
-  const values = extractFirstChannel(parsed);
-  const [,, z, y, x] = parsed.shape;
-  viewer.imageData.setDimensions(x, y, z);
+function setVolume(viewer, prepared, opacityPoints) {
+  setOpacityPoints(viewer, opacityPoints);
+  viewer.imageData.setDimensions(...prepared.dimensions);
   viewer.imageData.setSpacing(1, 1, 6);
   viewer.imageData.getPointData().setScalars(vtkDataArray.newInstance({
-    name: 'intensity', values: invertUint8(normalizeToUint8(values)), numberOfComponents: 1,
+    name: 'intensity', values: prepared.values, numberOfComponents: 1,
   }));
   viewer.imageData.modified();
   attachVolumeWhenReady(viewer);
@@ -119,24 +164,70 @@ function setVolume(viewer, parsed) {
 async function fetchVolume(path) {
   const response = await fetch(`${import.meta.env.BASE_URL}${path}`);
   if (!response.ok) throw new Error(`The data file could not be loaded (${response.status}).`);
-  return parseNpy(await response.arrayBuffer());
+  return prepareVolume(parseNpy(await response.arrayBuffer()));
+}
+
+const mobileVolumes = { deepcvr: null, dip: null };
+const volumePresentation = {
+  deepcvr: { label: 'DeepCVR reconstruction result', opacity: DEEPCVR_OPACITY_POINTS },
+  dip: { label: 'DIP reconstruction result', opacity: DIP_OPACITY_POINTS },
+};
+let selectedMobileKind = 'deepcvr';
+
+function updateMobileTabs() {
+  for (const button of mobileTabButtons) {
+    const kind = button.dataset.volumeKind;
+    const isSelected = kind === selectedMobileKind;
+    button.disabled = !mobileVolumes[kind];
+    button.setAttribute('aria-selected', String(isSelected));
+    button.classList.toggle('is-selected', isSelected);
+  }
+}
+
+function showMobileVolume(kind, { resetCamera = false } = {}) {
+  const prepared = mobileVolumes[kind];
+  if (!prepared) return;
+  selectedMobileKind = kind;
+  mobileTitle.textContent = volumePresentation[kind].label;
+  mobileWindow.setAttribute('aria-label', `${volumePresentation[kind].label} 3D view`);
+  updateMobileTabs();
+  setVolume(mobileViewer, prepared, volumePresentation[kind].opacity);
+  fitViewerToVolume(mobileViewer, { resetCamera });
 }
 
 async function loadComparison(id) {
   const dataset = DATASETS.find((entry) => entry.id === id);
   selector.disabled = true;
-  setViewerStatus('Loading DeepCVR volume…');
+  setViewerStatus('Loading DeepCVR volume...');
   try {
     const sources = getComparisonSources(dataset);
-    const viewers = { deepcvr: deepcvrViewer, dip: dipViewer };
-    await loadComparisonVolumes(sources, fetchVolume, (kind, data) => {
-      setVolume(viewers[kind], data);
-      fitViewerToVolume(viewers[kind]);
-      if (kind === 'deepcvr') setViewerStatus('Loading DIP volume…');
-    });
-    copyOrientation(deepcvrViewer, dipViewer);
-    syncAutoRotation();
-    setViewerStatus('Both volumes are ready.', 'ready');
+    if (singleViewerMode) {
+      mobileVolumes.deepcvr = null;
+      mobileVolumes.dip = null;
+      selectedMobileKind = 'deepcvr';
+      updateMobileTabs();
+      await loadComparisonVolumes(sources, fetchVolume, (kind, data) => {
+        mobileVolumes[kind] = data;
+        updateMobileTabs();
+        if (kind === 'deepcvr') {
+          showMobileVolume('deepcvr', { resetCamera: true });
+          setViewerStatus('Loading DIP volume...');
+        }
+      });
+      syncAutoRotation();
+      setViewerStatus('Both volumes are ready. Use the tabs to switch views.', 'ready');
+    } else {
+      const viewers = { deepcvr: deepcvrViewer, dip: dipViewer };
+      const opacityPoints = { deepcvr: DEEPCVR_OPACITY_POINTS, dip: DIP_OPACITY_POINTS };
+      await loadComparisonVolumes(sources, fetchVolume, (kind, data) => {
+        setVolume(viewers[kind], data, opacityPoints[kind]);
+        fitViewerToVolume(viewers[kind]);
+        if (kind === 'deepcvr') setViewerStatus('Loading DIP volume...');
+      });
+      copyOrientation(deepcvrViewer, dipViewer);
+      syncAutoRotation();
+      setViewerStatus('Both volumes are ready.', 'ready');
+    }
   } catch (error) {
     console.error('Unable to display the selected reconstruction comparison.', error);
     const detail = error instanceof Error ? error.message : String(error);
@@ -149,29 +240,32 @@ async function loadComparison(id) {
 const rotationRequester = {};
 let previousFrame = performance.now();
 let rotationRunning = false;
-deepcvrViewer.interactor.onAnimation(() => {
+primaryViewer.interactor.onAnimation(() => {
   const now = performance.now();
   const angle = rotationDelta((now - previousFrame) / 1000, autoRotateInput.checked);
   previousFrame = now;
   if (angle) {
-    deepcvrViewer.renderer.getActiveCamera().azimuth(angle);
-    deepcvrViewer.renderer.getActiveCamera().orthogonalizeViewUp();
-    deepcvrViewer.renderer.resetCameraClippingRange();
-    deepcvrViewer.renderer.updateLightsGeometryToFollowCamera();
+    primaryViewer.renderer.getActiveCamera().azimuth(angle);
+    primaryViewer.renderer.getActiveCamera().orthogonalizeViewUp();
+    primaryViewer.renderer.resetCameraClippingRange();
+    primaryViewer.renderer.updateLightsGeometryToFollowCamera();
   }
 });
 
 function syncAutoRotation() {
   previousFrame = performance.now();
   if (autoRotateInput.checked && !rotationRunning) {
-    deepcvrViewer.interactor.requestAnimation(rotationRequester);
+    primaryViewer.interactor.requestAnimation(rotationRequester);
     rotationRunning = true;
   } else if (!autoRotateInput.checked && rotationRunning) {
-    deepcvrViewer.interactor.cancelAnimation(rotationRequester, true);
+    primaryViewer.interactor.cancelAnimation(rotationRequester, true);
     rotationRunning = false;
   }
 }
 
+for (const button of mobileTabButtons) {
+  button.addEventListener('click', () => showMobileVolume(button.dataset.volumeKind));
+}
 selector.addEventListener('change', () => loadComparison(selector.value));
 autoRotateInput.addEventListener('change', syncAutoRotation);
 
@@ -180,9 +274,8 @@ function scheduleViewerRefit() {
   cancelAnimationFrame(refitFrame);
   refitFrame = requestAnimationFrame(() => {
     refitFrame = requestAnimationFrame(() => {
-      fitViewerToVolume(deepcvrViewer);
-      fitViewerToVolume(dipViewer);
-      if (deepcvrViewer.volumeAttached && dipViewer.volumeAttached) {
+      for (const viewer of activeViewers) fitViewerToVolume(viewer);
+      if (!singleViewerMode && deepcvrViewer.volumeAttached && dipViewer.volumeAttached) {
         copyOrientation(deepcvrViewer, dipViewer);
       }
     });

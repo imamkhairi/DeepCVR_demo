@@ -57,6 +57,19 @@ describe('volume data', () => {
     expect([...invertUint8(normalized)]).toEqual([255, 127, 0]);
   });
 
+  it('prepares a compact renderable volume with XYZ dimensions', () => {
+    expect(typeof volumeData.prepareVolume).toBe('function');
+    if (typeof volumeData.prepareVolume !== 'function') return;
+
+    const prepared = volumeData.prepareVolume({
+      shape: [1, 1, 1, 1, 2],
+      data: new Float32Array([10, 20]),
+    });
+
+    expect(prepared.dimensions).toEqual([2, 1, 1]);
+    expect([...prepared.values]).toEqual([255, 0]);
+  });
+
   it('uses current_flip for DeepCVR and current_flip_dip for DIP', () => {
     expect(DEEPCVR_OPACITY_POINTS).toEqual([
       [0, 0.04], [2, 0], [25, 0], [50, 0.05], [100, 0.07],
@@ -140,12 +153,13 @@ describe('volume data', () => {
 
     const events = [];
     const viewer = {
-      fullScreenRenderer: { resize: () => events.push('resize') },
+      fullScreenRenderer: { resize: () => events.push('fullscreen-resize') },
       interactor: { render: () => events.push('render') },
       renderer: {
         resetCamera: () => events.push('camera'),
         resetCameraClippingRange: () => events.push('clipping'),
       },
+      resizeSurface: () => events.push('surface-resize'),
       volumeAttached: false,
     };
 
@@ -153,7 +167,72 @@ describe('volume data', () => {
     viewer.volumeAttached = true;
     volumeData.fitViewerToVolume(viewer);
 
-    expect(events).toEqual(['resize', 'resize', 'camera', 'clipping', 'render']);
+    expect(events).toEqual(['surface-resize', 'surface-resize', 'camera', 'clipping', 'render']);
+  });
+
+  it('preserves the camera when rendering a tab-swapped mobile volume', () => {
+    expect(typeof volumeData.fitViewerToVolume).toBe('function');
+    if (typeof volumeData.fitViewerToVolume !== 'function') return;
+
+    const events = [];
+    const viewer = {
+      interactor: { render: () => events.push('render') },
+      renderer: {
+        resetCamera: () => events.push('camera'),
+        resetCameraClippingRange: () => events.push('clipping'),
+      },
+      resizeSurface: () => events.push('surface-resize'),
+      volumeAttached: true,
+    };
+
+    volumeData.fitViewerToVolume(viewer, { resetCamera: false });
+
+    expect(events).toEqual(['surface-resize', 'clipping', 'render']);
+  });
+
+  it('uses one viewer for constrained touch and narrow-screen devices', () => {
+    expect(typeof volumeData.shouldUseSingleViewer).toBe('function');
+    if (typeof volumeData.shouldUseSingleViewer !== 'function') return;
+
+    expect(volumeData.shouldUseSingleViewer({
+      coarsePointer: true, maxTouchPoints: 5, viewportWidth: 430,
+    })).toBe(true);
+    expect(volumeData.shouldUseSingleViewer({
+      coarsePointer: true, maxTouchPoints: 10, viewportWidth: 1280,
+    })).toBe(true);
+    expect(volumeData.shouldUseSingleViewer({
+      coarsePointer: false, maxTouchPoints: 10, viewportWidth: 1280,
+    })).toBe(false);
+    expect(volumeData.shouldUseSingleViewer({
+      coarsePointer: false, maxTouchPoints: 0, viewportWidth: 760,
+    })).toBe(true);
+    expect(volumeData.shouldUseSingleViewer({
+      coarsePointer: false, maxTouchPoints: 0, viewportWidth: 1440,
+    })).toBe(false);
+    expect(volumeData.shouldUseSingleViewer({
+      coarsePointer: true, maxTouchPoints: 0, viewportWidth: 1440,
+    })).toBe(false);
+  });
+
+  it('caps only constrained-device framebuffers at one device pixel per CSS pixel', () => {
+    expect(typeof volumeData.renderPixelRatio).toBe('function');
+    if (typeof volumeData.renderPixelRatio !== 'function') return;
+
+    expect(volumeData.renderPixelRatio(3, true)).toBe(1);
+    expect(volumeData.renderPixelRatio(2.625, true)).toBe(1);
+    expect(volumeData.renderPixelRatio(2, false)).toBe(2);
+    expect(volumeData.renderPixelRatio(0, false)).toBe(1);
+  });
+
+  it('allows explicit viewer-mode overrides for diagnostics', () => {
+    expect(typeof volumeData.resolveSingleViewerMode).toBe('function');
+    if (typeof volumeData.resolveSingleViewerMode !== 'function') return;
+
+    const touchDevice = { coarsePointer: true, maxTouchPoints: 5, viewportWidth: 1280 };
+    const desktop = { coarsePointer: false, maxTouchPoints: 0, viewportWidth: 1440 };
+    expect(volumeData.resolveSingleViewerMode(touchDevice, 'desktop')).toBe(false);
+    expect(volumeData.resolveSingleViewerMode(desktop, 'single')).toBe(true);
+    expect(volumeData.resolveSingleViewerMode(touchDevice, null)).toBe(true);
   });
 
   it('lists each supplied public reconstruction exactly once', () => {

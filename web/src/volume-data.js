@@ -39,13 +39,28 @@ export async function loadComparisonVolumes(sources, load, apply) {
   apply('dip', await load(sources.dip));
 }
 
-export function fitViewerToVolume(viewer) {
-  viewer.fullScreenRenderer.resize();
+export function fitViewerToVolume(viewer, { resetCamera = true } = {}) {
+  viewer.resizeSurface();
   if (!viewer.volumeAttached) return;
 
-  viewer.renderer.resetCamera();
+  if (resetCamera) viewer.renderer.resetCamera();
   viewer.renderer.resetCameraClippingRange();
   viewer.interactor.render();
+}
+
+export function shouldUseSingleViewer({ coarsePointer, maxTouchPoints, viewportWidth }) {
+  return Boolean(viewportWidth <= 760 || (maxTouchPoints > 0 && coarsePointer));
+}
+
+export function resolveSingleViewerMode(capabilities, override) {
+  if (override === 'single') return true;
+  if (override === 'desktop') return false;
+  return shouldUseSingleViewer(capabilities);
+}
+
+export function renderPixelRatio(devicePixelRatio, isConstrained) {
+  const ratio = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  return isConstrained ? 1 : ratio;
 }
 
 function product(values) {
@@ -136,6 +151,15 @@ export function normalizeToUint8(values) {
 
 export function invertUint8(values) {
   return Uint8Array.from(values, (value) => 255 - value);
+}
+
+export function prepareVolume(parsed) {
+  const values = extractFirstChannel(parsed);
+  const [,, z, y, x] = parsed.shape;
+  return {
+    dimensions: [x, y, z],
+    values: invertUint8(normalizeToUint8(values)),
+  };
 }
 
 export function rotationDelta(elapsedSeconds, isEnabled) {

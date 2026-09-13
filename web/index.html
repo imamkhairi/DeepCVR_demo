@@ -21,7 +21,17 @@
         </div>
         <p id="viewer-status" class="viewer-status" role="status" aria-live="polite">Preparing 3D viewers…</p>
       </section>
-      <section class="comparison-stack" aria-label="DeepCVR and DIP reconstruction comparison">
+      <section id="mobile-comparison" class="mobile-comparison" aria-label="Reconstruction viewer" hidden>
+        <div class="mobile-tabs" role="tablist" aria-label="Reconstruction method">
+          <button type="button" role="tab" data-volume-kind="deepcvr" aria-selected="true">DeepCVR</button>
+          <button type="button" role="tab" data-volume-kind="dip" aria-selected="false">DIP</button>
+        </div>
+        <article class="comparison-panel">
+          <h2 id="mobile-view-title">DeepCVR reconstruction result</h2>
+          <div id="mobile-window" class="render-window" aria-label="DeepCVR reconstruction result 3D view"></div>
+        </article>
+      </section>
+      <section id="desktop-comparison" class="comparison-stack" aria-label="DeepCVR and DIP reconstruction comparison">
         <article class="comparison-panel">
           <h2>DeepCVR reconstruction result</h2>
           <div id="deepcvr-window" class="render-window" aria-label="DeepCVR 3D reconstruction"></div>
